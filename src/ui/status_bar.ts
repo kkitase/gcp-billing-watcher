@@ -92,15 +92,18 @@ export class StatusBarManager {
 		const now = new Date();
 		const year = now.getFullYear();
 		const month = now.getMonth() + 1;
+		const lastMonth = month === 1 ? 12 : month - 1;
 		
 		const lines = [
 			'GCP Billing Watcher',
 			'─────────────────────',
-			`📅 ${month}月コスト: ${this.formatCurrency(cost.amount, cost.currency)}`,
-			`📊 ${year}年コスト: ${this.formatCurrency(cost.yearlyAmount, cost.currency)}`,
+			`📅 ${month}月: ${this.formatCurrency(cost.amount, cost.currency)}`,
+			`📅 ${lastMonth}月: ${this.formatCurrency(cost.lastMonthAmount, cost.currency)}`,
+			'─────────────────────',
+			`📊 過去3ヶ月: ${this.formatCurrency(cost.last3MonthsAmount, cost.currency)}`,
+			`📊 ${year}年間: ${this.formatCurrency(cost.yearlyAmount, cost.currency)}`,
 			'─────────────────────',
 			`最終更新: ${cost.lastUpdated.toLocaleString('ja-JP')}`,
-			'─────────────────────',
 			'クリックして今すぐ更新',
 		];
 		return lines.join('\n');

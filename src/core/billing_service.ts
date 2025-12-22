@@ -9,6 +9,8 @@ import { GoogleAuth } from "google-auth-library";
 export interface BillingCost {
   currency: string;
   amount: number;           // 当月の課金額
+  lastMonthAmount: number;  // 先月の課金額
+  last3MonthsAmount: number; // 過去3ヶ月の課金額
   yearlyAmount: number;     // 年間の課金額
   lastUpdated: Date;
 }
@@ -90,7 +92,7 @@ export class BillingService {
   }
 
   /**
-   * 当月と年間の課金データを取得
+   * 課金データを取得（当月・先月・過去3ヶ月・年間）
    * Cloud Billing Export to BigQuery を使用して取得
    */
   async fetchCurrentMonthCost(): Promise<BillingCost> {
@@ -105,16 +107,26 @@ export class BillingService {
       // 現在年月を計算（UTC）
       const now = new Date();
       const year = now.getUTCFullYear();
-      const month = String(now.getUTCMonth() + 1).padStart(2, "0");
+      const month = now.getUTCMonth() + 1;
+      const currentMonth = `${year}${String(month).padStart(2, "0")}`;
+      
+      // 先月を計算
+      const lastMonthDate = new Date(year, month - 2, 1);
+      const lastMonth = `${lastMonthDate.getFullYear()}${String(lastMonthDate.getMonth() + 1).padStart(2, "0")}`;
+      
+      // 3ヶ月前を計算
+      const threeMonthsAgoDate = new Date(year, month - 4, 1);
+      const threeMonthsAgo = `${threeMonthsAgoDate.getFullYear()}${String(threeMonthsAgoDate.getMonth() + 1).padStart(2, "0")}`;
 
-      // BigQuery での課金データクエリ（当月と年間を一度に取得）
+      // BigQuery での課金データクエリ（当月・先月・過去3ヶ月・年間を一度に取得）
       const query = `
         SELECT 
-          SUM(CASE WHEN invoice.month = '${year}${month}' THEN cost ELSE 0 END) as monthly_cost,
+          SUM(CASE WHEN invoice.month = '${currentMonth}' THEN cost ELSE 0 END) as monthly_cost,
+          SUM(CASE WHEN invoice.month = '${lastMonth}' THEN cost ELSE 0 END) as last_month_cost,
+          SUM(CASE WHEN invoice.month >= '${threeMonthsAgo}' AND invoice.month <= '${currentMonth}' THEN cost ELSE 0 END) as last_3months_cost,
           SUM(CASE WHEN invoice.month LIKE '${year}%' THEN cost ELSE 0 END) as yearly_cost,
           currency
         FROM \`${this.projectId}.billing_export.${tableName}\`
-        WHERE invoice.month LIKE '${year}%'
         GROUP BY currency
         LIMIT 1
       `;
@@ -146,11 +158,13 @@ export class BillingService {
 
       if (data.rows && data.rows.length > 0) {
         const row = data.rows[0];
-        if (row && row.f && row.f[0] && row.f[1] && row.f[2]) {
+        if (row && row.f && row.f.length >= 5) {
           const cost: BillingCost = {
             amount: parseFloat(row.f[0].v ?? "0"),
-            yearlyAmount: parseFloat(row.f[1].v ?? "0"),
-            currency: row.f[2].v ?? "USD",
+            lastMonthAmount: parseFloat(row.f[1].v ?? "0"),
+            last3MonthsAmount: parseFloat(row.f[2].v ?? "0"),
+            yearlyAmount: parseFloat(row.f[3].v ?? "0"),
+            currency: row.f[4].v ?? "USD",
             lastUpdated: new Date(),
           };
           this.lastCost = cost;
@@ -161,6 +175,8 @@ export class BillingService {
       // データがない場合はデフォルト値を返す
       const defaultCost: BillingCost = {
         amount: 0,
+        lastMonthAmount: 0,
+        last3MonthsAmount: 0,
         yearlyAmount: 0,
         currency: "USD",
         lastUpdated: new Date(),
