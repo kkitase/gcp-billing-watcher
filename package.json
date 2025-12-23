@@ -2,7 +2,7 @@
   "name": "gcp-billing-watcher",
   "displayName": "GCP Billing Watcher",
   "description": "%extension.description%",
-  "version": "0.3.7",
+  "version": "0.3.8",
   "publisher": "kimisan",
   "engines": {
     "vscode": "^1.85.0"
@@ -93,7 +93,7 @@
   "scripts": {
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "package": "npm run compile && npx vsce package"
+    "package": "npm run compile && npx vsce package --out release/"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",

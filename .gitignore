@@ -5,6 +5,7 @@ node_modules/
 out/
 
 # Package files
+release/
 *.vsix
 
 # Credentials (VERY IMPORTANT!)
