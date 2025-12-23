@@ -3,7 +3,7 @@
   "displayName": "GCP Billing Watcher",
   "description": "GCP 課金をステータスバーに表示（今月/年間）。ツールチップで先月・過去3ヶ月も確認可能。※有効化以降のデータのみ",
   "version": "0.3.2",
-  "publisher": "kkitase",
+  "publisher": "kimisan",
   "engines": {
     "vscode": "^1.85.0"
   },

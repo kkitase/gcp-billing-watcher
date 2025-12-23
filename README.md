@@ -2,7 +2,7 @@
 
 VS Code のステータスバーに GCP の課金状況（当月・先月・過去3ヶ月・年間）を表示する拡張機能です。
 
-![Status Bar Example](https://img.shields.io/badge/GCP-$12.34_/_$156.78-blue?style=flat-square)
+![Screenshot](assets/screenshot.png)
 
 ## 機能
 
@@ -206,6 +206,12 @@ npm run package  # VSIX パッケージ作成
 - **認証**: Google Auth Library（Application Default Credentials）
 - **データ取得**: BigQuery REST API で課金エクスポートテーブルをクエリ
 - **テーブル発見**: `billing_export` データセット内の `gcp_billing_export_v1_*` テーブルを自動検出
+
+---
+
+## 変更履歴
+
+[CHANGELOG.md](CHANGELOG.md) を参照してください。
 
 ---
 

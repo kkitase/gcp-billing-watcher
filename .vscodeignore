@@ -1,0 +1,8 @@
+src/
+*.ts
+.gitignore
+tsconfig.json
+note/
+setup.sh
+package-lock.json
+.vscode/
