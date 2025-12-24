@@ -103,6 +103,7 @@ function initialize(): void {
 	const datasetId = config.get<string>('datasetId', 'billing_export');
 	const credentialsPath = config.get<string>('credentialsPath', '');
 	const refreshIntervalMinutes = config.get<number>('refreshIntervalMinutes', 30);
+	const strictSsl = config.get<boolean>('strictSsl', true);
 
 	// 既存のインターバルをクリア
 	if (refreshInterval) {
@@ -125,7 +126,8 @@ function initialize(): void {
 	billingService = new BillingService(
 		projectId,
 		datasetId,
-		credentialsPath || undefined
+		credentialsPath || undefined,
+		strictSsl
 	);
 
 	log(`プロジェクト ID: ${projectId}`);
