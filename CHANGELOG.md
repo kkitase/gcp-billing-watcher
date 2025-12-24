@@ -2,11 +2,13 @@
 
 All notable changes to the "GCP Billing Watcher" extension will be documented in this file.
 
-## [0.3.10] - 2024-12-24
+## [0.3.11] - 2024-12-24
 
 ### Added
 - トラブルシューティング: SSL 証明書検証スキップ設定 (`gcpBilling.skipSslVerification`) を追加
 - プロキシ環境などで接続エラーが発生する場合の回避策を提供
+
+## [0.3.10] - 2024-12-24
 
 ## [0.3.9] - 2024-12-24
 

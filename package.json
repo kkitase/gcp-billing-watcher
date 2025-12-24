@@ -2,7 +2,7 @@
   "name": "gcp-billing-watcher",
   "displayName": "GCP Billing Watcher",
   "description": "%extension.description%",
-  "version": "0.3.10",
+  "version": "0.3.11",
   "publisher": "kimisan",
   "engines": {
     "vscode": "^1.85.0"
