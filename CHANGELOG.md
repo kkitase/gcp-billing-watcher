@@ -2,6 +2,15 @@
 
 All notable changes to the "Google Cloud Billing Watcher" extension will be documented in this file.
 
+## [0.4.1] - 2026-04-25
+
+### Added
+- 認証エラー (`invalid_rapt` / RAPT 失効、ADC 読み込み失敗) を検知し、再認証手順を案内する通知を追加
+- ステータスバーに「認証が必要 (🔑)」状態を追加（warning 背景色）
+- コマンド `Google Cloud Billing: Run ADC Login` を追加。統合ターミナルを開いて `gcloud auth application-default login` を入力済みの状態にする
+- 通知のアクション: 「ターミナルで実行」「コマンドをコピー」「ヘルプを開く」
+- 同一種別の認証エラー通知は連続して再表示しないよう抑制（次回成功でリセット）
+
 ## [0.3.16] - 2025-12-25
 
 ### Changed

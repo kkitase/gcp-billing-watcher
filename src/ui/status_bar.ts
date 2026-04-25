@@ -1,176 +1,166 @@
 /**
- * Google Cloud Billing Watcher - Status Bar Manager
- * ステータスバーへの表示を制御
+ * ステータスバーの表示制御。
+ * 集約された AggregatedBilling を受け取り、合計をテキスト、内訳を Tooltip に表示する。
  */
 
-import * as vscode from 'vscode';
-import { BillingCost } from '../core/billing_service';
+import * as vscode from "vscode";
+import { AggregatedBilling } from "../core/billing_manager";
+import { Language } from "../core/config";
+import { formatCurrency } from "./formatter";
+import { getLabels, resolveLocale } from "./i18n";
+
+const DIVIDER = "─────────────────────";
 
 export class StatusBarManager {
-	private item: vscode.StatusBarItem;
+  private readonly item: vscode.StatusBarItem;
 
-	constructor() {
-		this.item = vscode.window.createStatusBarItem(
-			vscode.StatusBarAlignment.Right,
-			90 // AGQ より少し左に表示
-		);
-		this.item.command = 'gcpBilling.menu';
-		this.item.text = '$(cloud) Google Cloud: --';
-		this.item.tooltip = 'Google Cloud Billing Watcher - クリックしてメニューを表示';
-		this.item.show();
-	}
+  constructor() {
+    this.item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 90);
+    this.item.command = "gcpBilling.menu";
+    this.item.text = "$(cloud) Google Cloud: --";
+    this.item.tooltip = "Google Cloud Billing Watcher";
+    this.item.show();
+  }
 
-	/**
-	 * ローディング状態を表示
-	 */
-	showLoading(): void {
-		this.item.text = '$(sync~spin) Google Cloud: ...';
-		this.item.backgroundColor = undefined;
-	}
+  showLoading(): void {
+    this.item.text = "$(sync~spin) Google Cloud: ...";
+    this.item.backgroundColor = undefined;
+  }
 
-	/**
-	 * エラー状態を表示
-	 */
-	showError(message: string): void {
-		this.item.text = '$(error) Google Cloud: Error';
-		this.item.tooltip = `エラー: ${message}`;
-		this.item.backgroundColor = new vscode.ThemeColor('statusBarItem.errorBackground');
-	}
+  showError(message: string): void {
+    this.item.text = "$(error) Google Cloud: Error";
+    this.item.tooltip = `Error: ${message}`;
+    this.item.backgroundColor = new vscode.ThemeColor("statusBarItem.errorBackground");
+  }
 
-	/**
-	 * 課金データを表示
-	 */
-	update(cost: BillingCost, budget: number = 0, language: string = 'auto'): void {
-		const locale = this.getLocale(language);
-		const monthlyFormatted = this.formatCurrency(cost.amount, cost.currency, locale);
-		const yearlyFormatted = this.formatCurrency(cost.yearlyAmount, cost.currency, locale);
-		
-		let icon = '$(check)';
-		let backgroundColor: vscode.ThemeColor | undefined = undefined;
+  showNotConfigured(language: Language): void {
+    const labels = getLabels(language);
+    this.item.text = `$(gear) Google Cloud: ${labels.notConfigured}`;
+    this.item.tooltip = labels.notConfiguredTooltip;
+    this.item.backgroundColor = new vscode.ThemeColor("statusBarItem.warningBackground");
+  }
 
-		// 予算アラートロジック
-		if (budget > 0) {
-			const ratio = cost.amount / budget;
-			if (ratio >= 1.0) {
-				icon = '$(error)';
-				backgroundColor = new vscode.ThemeColor('statusBarItem.errorBackground');
-			} else if (ratio >= 0.8) {
-				icon = '$(warning)';
-				backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
-			}
-		} else {
-			// 予算設定がない場合のデフォルト警告（年間コストベース）
-			if (cost.yearlyAmount > 100) {
-				icon = '$(warning)';
-			}
-			if (cost.yearlyAmount > 500) {
-				icon = '$(error)';
-			}
-		}
+  showAuthRequired(language: Language): void {
+    const labels = getLabels(language);
+    this.item.text = `$(key) Google Cloud: ${labels.authRequired}`;
+    this.item.tooltip = labels.authRequiredTooltip;
+    this.item.backgroundColor = new vscode.ThemeColor("statusBarItem.warningBackground");
+  }
 
-		// ステータスバー: 当月 / 年間
-		this.item.text = `${icon} Google Cloud: ${monthlyFormatted} / ${yearlyFormatted}`;
-		this.item.tooltip = this.buildTooltip(cost, budget, language);
-		this.item.backgroundColor = backgroundColor;
-	}
+  update(aggregated: AggregatedBilling, budget: number, language: Language): void {
+    const locale = resolveLocale(language);
+    const { total } = aggregated;
 
-	/**
-	 * 設定未完了の状態を表示
-	 */
-	showNotConfigured(): void {
-		this.item.text = '$(gear) Google Cloud: Not Configured';
-		this.item.tooltip = 'クリックして設定を開く（gcpBilling.projectId を設定してください）';
-		this.item.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
-	}
+    const monthly = formatCurrency(total.amount, total.currency, locale);
+    const yearly = formatCurrency(total.yearlyAmount, total.currency, locale);
 
-	/**
-	 * ロケールを取得
-	 */
-	private getLocale(language: string): string {
-		if (language === 'en') {
-			return 'en-US';
-		}
-		if (language === 'ja') {
-			return 'ja-JP';
-		}
-		// auto の場合はシステム設定（VS Code の設定）に従う
-		return vscode.env.language.startsWith('ja') ? 'ja-JP' : 'en-US';
-	}
+    const { icon, backgroundColor } = pickSeverity(aggregated, budget);
 
-	/**
-	 * 通貨をフォーマット
-	 */
-	private formatCurrency(amount: number, currency: string, locale: string): string {
-		try {
-			// 通貨が JPY の場合、特定のロケールで小数点以下の扱いが変わる可能性があるため明示的に指定
-			return new Intl.NumberFormat(locale, {
-				style: 'currency',
-				currency: currency,
-				minimumFractionDigits: currency === 'JPY' ? 0 : 2,
-				maximumFractionDigits: currency === 'JPY' ? 0 : 2,
-			}).format(amount);
-		} catch {
-			// フォールバック
-			return `${currency} ${amount.toFixed(2)}`;
-		}
-	}
+    this.item.text = `${icon} Google Cloud: ${monthly} / ${yearly}`;
+    this.item.tooltip = this.buildTooltip(aggregated, budget, language);
+    this.item.backgroundColor = backgroundColor;
+  }
 
-	/**
-	 * ツールチップを構築
-	 */
-	private buildTooltip(cost: BillingCost, budget: number, language: string): string {
-		const isJa = this.getLocale(language) === 'ja-JP';
-		const locale = this.getLocale(language);
-		
-		const now = new Date();
-		const month = now.getMonth() + 1;
-		const lastMonth = month === 1 ? 12 : month - 1;
+  dispose(): void {
+    this.item.dispose();
+  }
 
-		const labels = {
-			title: 'Google Cloud Billing Watcher',
-			currentCost: isJa ? '現在のコスト' : 'Current Cost',
-			beforeCredits: isJa ? '割引前' : 'Before Credits',
-			credits: isJa ? '割引額' : 'Credits',
-			total: isJa ? '小計' : 'Subtotal',
-			budget: isJa ? '予算' : 'Budget',
-			lastMonth: isJa ? `${lastMonth}月 (確定)` : `Last Month (${lastMonth})`,
-			last3Months: isJa ? '過去3ヶ月' : 'Last 3 Months',
-			yearly: isJa ? `${now.getFullYear()}年間` : `Yearly (${now.getFullYear()})`,
-			lastUpdated: isJa ? '最終更新' : 'Last Updated',
-			clickMenu: isJa ? 'クリックしてメニューを表示' : 'Click to show menu',
-		};
-		
-		const lines = [
-			labels.title,
-			'─────────────────────',
-			`💰 ${labels.currentCost}:`,
-			`   ${labels.beforeCredits}: ${this.formatCurrency(cost.amountBeforeCredits, cost.currency, locale)}`,
-			`   ${labels.credits}: ${this.formatCurrency(cost.creditsAmount, cost.currency, locale)}`,
-			`   ${labels.total}: ${this.formatCurrency(cost.amount, cost.currency, locale)}`,
-		];
+  private buildTooltip(aggregated: AggregatedBilling, budget: number, language: Language): string {
+    const labels = getLabels(language);
+    const locale = resolveLocale(language);
+    const { total, perProject, hasMixedCurrency, errorCount } = aggregated;
 
-		// 予算情報の表示
-		if (budget > 0) {
-			const ratio = (cost.amount / budget) * 100;
-			lines.push(`💰 ${labels.budget}: ${this.formatCurrency(budget, cost.currency, locale)} (${ratio.toFixed(1)}%)`);
-		}
+    const now = new Date();
+    const month = now.getMonth() + 1;
+    const lastMonthNum = month === 1 ? 12 : month - 1;
 
-		lines.push(
-			`📅 ${labels.lastMonth}: ${this.formatCurrency(cost.lastMonthAmount, cost.currency, locale)}`,
-			'─────────────────────',
-			`📊 ${labels.last3Months}: ${this.formatCurrency(cost.last3MonthsAmount, cost.currency, locale)}`,
-			`📊 ${labels.yearly}: ${this.formatCurrency(cost.yearlyAmount, cost.currency, locale)}`,
-			'─────────────────────',
-			`${labels.lastUpdated}: ${cost.lastUpdated.toLocaleString(locale)}`,
-			labels.clickMenu,
-		);
-		return lines.join('\n');
-	}
+    const fmt = (n: number) => formatCurrency(n, total.currency, locale);
 
-	/**
-	 * リソースを解放
-	 */
-	dispose(): void {
-		this.item.dispose();
-	}
+    const lines: string[] = [
+      labels.title,
+      DIVIDER,
+      `💰 ${labels.currentCost}:`,
+      `   ${labels.beforeCredits}: ${fmt(total.amountBeforeCredits)}`,
+      `   ${labels.credits}: ${fmt(total.creditsAmount)}`,
+      `   ${labels.total}: ${fmt(total.amount)}`,
+    ];
+
+    if (budget > 0) {
+      const ratio = (total.amount / budget) * 100;
+      lines.push(`💰 ${labels.budget}: ${fmt(budget)} (${ratio.toFixed(1)}%)`);
+    }
+
+    lines.push(
+      `📅 ${labels.lastMonth(lastMonthNum)}: ${fmt(total.lastMonthAmount)}`,
+      DIVIDER,
+      `📊 ${labels.last3Months}: ${fmt(total.last3MonthsAmount)}`,
+      `📊 ${labels.yearly(now.getFullYear())}: ${fmt(total.yearlyAmount)}`,
+    );
+
+    // プロジェクトが1件より多いときだけ内訳を出す
+    if (perProject.length > 1) {
+      lines.push(DIVIDER, `📁 ${labels.breakdown}:`);
+      for (const r of perProject) {
+        if (r.cost) {
+          const amount = formatCurrency(r.cost.amount, r.cost.currency, locale);
+          lines.push(`   • ${r.project.label}: ${amount}`);
+        } else {
+          lines.push(`   • ${r.project.label}: ⚠️ ${r.error ?? "error"}`);
+        }
+      }
+    }
+
+    if (hasMixedCurrency) {
+      lines.push(DIVIDER, labels.mixedCurrencyWarning);
+    }
+    if (errorCount > 0) {
+      lines.push(labels.errorSuffix(errorCount));
+    }
+
+    lines.push(
+      DIVIDER,
+      `${labels.lastUpdated}: ${total.lastUpdated.toLocaleString(locale)}`,
+      labels.clickMenu,
+    );
+    return lines.join("\n");
+  }
+}
+
+function pickSeverity(
+  aggregated: AggregatedBilling,
+  budget: number,
+): { icon: string; backgroundColor: vscode.ThemeColor | undefined } {
+  const { total, errorCount } = aggregated;
+
+  // 予算設定がある場合はそれを優先
+  if (budget > 0) {
+    const ratio = total.amount / budget;
+    if (ratio >= 1.0) {
+      return {
+        icon: "$(error)",
+        backgroundColor: new vscode.ThemeColor("statusBarItem.errorBackground"),
+      };
+    }
+    if (ratio >= 0.8) {
+      return {
+        icon: "$(warning)",
+        backgroundColor: new vscode.ThemeColor("statusBarItem.warningBackground"),
+      };
+    }
+  } else {
+    // 予算未設定時の年間コストベースのフォールバック判定
+    if (total.yearlyAmount > 500) {
+      return { icon: "$(error)", backgroundColor: undefined };
+    }
+    if (total.yearlyAmount > 100) {
+      return { icon: "$(warning)", backgroundColor: undefined };
+    }
+  }
+
+  // 一部プロジェクトが失敗している場合は警告アイコンだけ出す
+  if (errorCount > 0) {
+    return { icon: "$(warning)", backgroundColor: undefined };
+  }
+
+  return { icon: "$(check)", backgroundColor: undefined };
 }

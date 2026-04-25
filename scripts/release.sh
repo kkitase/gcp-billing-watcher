@@ -8,12 +8,9 @@ set -e
 VERSION_TYPE=${1:-patch}
 MESSAGE=${2:-"Update"}
 
-if [ -z "$VSCE_PAT" ]; then
-  echo "エラー: VSCE_PAT 環境変数が設定されていません。"
-  exit 1
-fi
-
 echo "--- リリースプロセスを開始します: $VERSION_TYPE ---"
+# VSCE PAT は macOS キーチェーン (service=vscode-vsce, account=kimisan) から
+# vsce が自動取得するため、環境変数 VSCE_PAT は不要。
 
 # 1. バージョンアップ
 echo "--- バージョンを更新中 ($VERSION_TYPE) ---"
@@ -43,6 +40,6 @@ gh release create "$NEW_VERSION" "$VSIX_FILE" --title "$NEW_VERSION" --notes "$M
 
 # 6. Marketplace への公開
 echo "--- Marketplace へ公開中 ---"
-npx @vscode/vsce publish --pat "$VSCE_PAT"
+npx @vscode/vsce publish
 
 echo "--- リリースが正常に完了しました: $NEW_VERSION ---"

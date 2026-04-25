@@ -2,7 +2,7 @@
   "name": "gcp-billing-watcher",
   "displayName": "Google Cloud Billing Watcher",
   "description": "Display Google Cloud billing status (current month, annual total, etc.) in real-time in the status bar.",
-  "version": "0.3.16",
+  "version": "0.4.1",
   "publisher": "kimisan",
   "license": "MIT",
   "engines": {
@@ -36,28 +36,65 @@
       {
         "command": "gcpBilling.showLogs",
         "title": "Google Cloud Billing: Show Logs"
+      },
+      {
+        "command": "gcpBilling.runAdcLogin",
+        "title": "Google Cloud Billing: Run ADC Login (gcloud auth application-default login)"
       }
     ],
     "configuration": {
       "title": "Google Cloud Billing Watcher",
       "properties": {
+        "gcpBilling.projects": {
+          "type": "array",
+          "default": [],
+          "description": "List of GCP projects to monitor. Each item is an object with projectId, and optional datasetId, credentialsPath, label.",
+          "items": {
+            "type": "object",
+            "required": [
+              "projectId"
+            ],
+            "properties": {
+              "projectId": {
+                "type": "string",
+                "description": "GCP Project ID."
+              },
+              "datasetId": {
+                "type": "string",
+                "default": "billing_export",
+                "description": "BigQuery dataset name (default: billing_export)."
+              },
+              "credentialsPath": {
+                "type": "string",
+                "default": "",
+                "description": "Path to service account JSON key file (uses ADC if omitted)."
+              },
+              "label": {
+                "type": "string",
+                "default": "",
+                "description": "Display label for this project (optional, falls back to projectId)."
+              }
+            }
+          },
+          "order": 1
+        },
         "gcpBilling.projectId": {
           "type": "string",
           "default": "",
-          "description": "Project ID",
-          "order": 1
+          "description": "(Deprecated) Single project ID. Use gcpBilling.projects instead. Kept for backward compatibility.",
+          "order": 10
         },
         "gcpBilling.datasetId": {
           "type": "string",
           "default": "billing_export",
-          "description": "BigQuery dataset name. Default is billing_export.",
-          "order": 2
+          "description": "(Deprecated) BigQuery dataset name used with gcpBilling.projectId.",
+          "order": 11
         },
         "gcpBilling.credentialsPath": {
           "type": "string",
           "default": "",
-          "description": "Path to service account JSON key file (uses ADC if omitted).",
-          "order": 3
+          "description": "(Deprecated) Service account JSON key path used with gcpBilling.projectId.",
+          "order": 12
         },
         "gcpBilling.refreshIntervalMinutes": {
           "type": "number",
@@ -69,7 +106,7 @@
         "gcpBilling.monthlyBudget": {
           "type": "number",
           "default": 0,
-          "description": "Monthly budget (Currency unit, e.g. USD/JPY). Set to 0 to disable alerts.",
+          "description": "Monthly budget (Currency unit, e.g. USD/JPY). Set to 0 to disable alerts. Compared against the aggregated total across all projects.",
           "order": 5
         },
         "gcpBilling.language": {

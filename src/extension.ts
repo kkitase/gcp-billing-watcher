@@ -1,257 +1,211 @@
 /**
- * Google Cloud Billing Watcher - Extension Entry Point
- * VS Code 拡張機能のエントリポイント
+ * Google Cloud Billing Watcher - エントリポイント。
+ * 各モジュールの組み立てと定期実行のスケジューリングのみを担当する。
  */
 
 import * as vscode from "vscode";
-import { BillingService } from "./core/billing_service";
+import { promptForProjectId, registerCommands, showAuthErrorNotification } from "./commands";
+import { AuthErrorKind, classifyAuthError } from "./core/auth_error";
+import { BillingManager } from "./core/billing_manager";
+import { ExtensionConfig, loadConfig } from "./core/config";
+import { Logger } from "./core/logger";
+import { getLabels } from "./ui/i18n";
 import { StatusBarManager } from "./ui/status_bar";
 
-let billingService: BillingService | null = null;
-let statusBar: StatusBarManager;
-let refreshInterval: NodeJS.Timeout | undefined;
-let outputChannel: vscode.OutputChannel;
+const EXTENSION_NAME = "Google Cloud Billing Watcher";
 
-/**
- * 拡張機能のアクティベーション
- */
+let logger: Logger;
+let statusBar: StatusBarManager;
+let manager: BillingManager;
+let refreshTimer: NodeJS.Timeout | undefined;
+/** 認証エラー通知の重複抑制。同じ種類の警告が連続して出るのを防ぐ */
+let lastNotifiedAuthErrorKind: AuthErrorKind = null;
+
 export function activate(context: vscode.ExtensionContext): void {
-  outputChannel = vscode.window.createOutputChannel("Google Cloud Billing Watcher");
-  log("拡張機能を起動しています...");
+  logger = new Logger(EXTENSION_NAME);
+  context.subscriptions.push({ dispose: () => logger.dispose() });
 
   statusBar = new StatusBarManager();
   context.subscriptions.push(statusBar);
 
-  // コマンド登録: 今すぐ更新
-  context.subscriptions.push(
-    vscode.commands.registerCommand("gcpBilling.refresh", async () => {
-      log("手動更新がリクエストされました");
-      await fetchAndUpdate();
-    })
-  );
+  manager = new BillingManager(logger);
 
-  // コマンド登録: メニューを表示
-  context.subscriptions.push(
-    vscode.commands.registerCommand("gcpBilling.menu", async () => {
-      const items = [
-        { label: "$(sync) 今すぐ更新", action: "refresh" },
-        {
-          label: "$(link-external) Google Cloud コンソールを開く",
-          action: "openConsole",
-        },
-        { label: "$(gear) 設定を開く", action: "openSettings" },
-      ];
+  registerCommands(context, {
+    logger,
+    manager,
+    refresh: fetchAndUpdate,
+  });
 
-      const selected = await vscode.window.showQuickPick(items, {
-        placeHolder: "Google Cloud Billing Watcher",
-      });
-
-      if (selected) {
-        switch (selected.action) {
-          case "refresh":
-            await fetchAndUpdate();
-            break;
-          case "openConsole":
-            await vscode.commands.executeCommand("gcpBilling.openConsole");
-            break;
-          case "openSettings":
-            await vscode.commands.executeCommand(
-              "workbench.action.openSettings",
-              "gcpBilling"
-            );
-            break;
-        }
-      }
-    })
-  );
-
-  // コマンド登録: Google Cloud コンソールを開く
-  context.subscriptions.push(
-    vscode.commands.registerCommand("gcpBilling.openConsole", () => {
-      const config = vscode.workspace.getConfiguration("gcpBilling");
-      const projectId = config.get<string>("projectId");
-      if (projectId) {
-        const url = `https://console.cloud.google.com/billing/reports?project=${projectId}`;
-        vscode.env.openExternal(vscode.Uri.parse(url));
-      }
-    })
-  );
-
-  // コマンド登録: ログを表示
-  context.subscriptions.push(
-    vscode.commands.registerCommand("gcpBilling.showLogs", () => {
-      outputChannel.show();
-    })
-  );
-
-  // 設定変更の監視
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (e.affectsConfiguration("gcpBilling")) {
-        log("設定が変更されました。再初期化します...");
+        logger.info("設定が変更されました。再初期化します...");
         initialize();
       }
-    })
+    }),
   );
 
-  // 初期化
+  logger.info("拡張機能を起動しています...");
   initialize();
+  logger.info("拡張機能の起動が完了しました");
+}
 
-  log("拡張機能の起動が完了しました");
+export function deactivate(): void {
+  clearRefreshTimer();
+  logger?.info("拡張機能を終了しました");
 }
 
 /**
- * 初期化処理
+ * 現在の設定を読み込み、BillingManager と定期実行を設定し直す。
  */
 function initialize(): void {
-  const config = vscode.workspace.getConfiguration("gcpBilling");
-  const projectId = config.get<string>("projectId", "");
-  const datasetId = config.get<string>("datasetId", "billing_export");
-  const credentialsPath = config.get<string>("credentialsPath", "");
-  const refreshIntervalMinutes = config.get<number>(
-    "refreshIntervalMinutes",
-    30
-  );
-  const skipSslVerification = config.get<boolean>("skipSslVerification", false);
+  const config = loadConfig();
 
-  // SSL 検証のスキップ設定を反映
-  if (skipSslVerification) {
-    log("警告: SSL 証明書の検証をスキップします (gcpBilling.skipSslVerification: true)");
-    process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
-  } else {
-    // デフォルトに戻す（設定変更時を考慮）
-    delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;
-  }
+  applySslVerificationSetting(config.skipSslVerification);
+  clearRefreshTimer();
 
-  // 既存のインターバルをクリア
-  if (refreshInterval) {
-    clearInterval(refreshInterval);
-    refreshInterval = undefined;
-  }
-
-  // プロジェクト ID が設定されていない場合、設定ダイアログを表示
-  if (!projectId) {
-    log("プロジェクト ID が設定されていません");
-    statusBar.showNotConfigured();
-    billingService = null;
-
-    // 初回起動時に設定を促すダイアログを表示
-    promptForProjectId();
+  if (!manager.hasProjects() && config.projects.length === 0) {
+    logger.info("プロジェクトが設定されていません");
+    statusBar.showNotConfigured(config.language);
+    promptForProjectId(logger);
     return;
   }
 
-  // BillingService を初期化
-  billingService = new BillingService(
-    projectId,
-    datasetId,
-    credentialsPath || undefined
+  manager.configure(config.projects);
+
+  if (config.projects.length === 0) {
+    statusBar.showNotConfigured(config.language);
+    return;
+  }
+
+  logger.info(
+    `監視対象プロジェクト: ${config.projects.map((p) => p.projectId).join(", ")}`,
   );
+  logger.info(`更新間隔: ${config.refreshIntervalMinutes} 分`);
 
-  log(`プロジェクト ID: ${projectId}`);
-  log(`データセット ID: ${datasetId}`);
-  log(`更新間隔: ${refreshIntervalMinutes} 分`);
-
-  // 初回取得
   fetchAndUpdate();
 
-  // 定期更新を設定
-  const intervalMs = refreshIntervalMinutes * 60 * 1000;
-  refreshInterval = setInterval(() => {
-    log("定期更新を実行します...");
+  const intervalMs = config.refreshIntervalMinutes * 60 * 1000;
+  refreshTimer = setInterval(() => {
+    logger.info("定期更新を実行します...");
     fetchAndUpdate();
   }, intervalMs);
 }
 
-/**
- * 課金データを取得して UI を更新
- */
 async function fetchAndUpdate(): Promise<void> {
-  if (!billingService) {
-    statusBar.showNotConfigured();
+  if (!manager.hasProjects()) {
+    // UI は initialize 側で showNotConfigured 済み
     return;
   }
 
   statusBar.showLoading();
 
   try {
-    const cost = await billingService.fetchCurrentMonthCost();
-    log(`課金データ取得成功: ${cost.currency} ${cost.amount.toFixed(2)}`);
+    const aggregated = await manager.fetchAll();
 
-    const config = vscode.workspace.getConfiguration("gcpBilling");
-    const budget = config.get<number>("monthlyBudget", 0);
-    const language = config.get<string>("language", "auto");
+    // 設定の再読み込みはここで1度だけ行う
+    const config = loadConfig();
 
-    statusBar.update(cost, budget, language);
+    // 認証エラーは全失敗・部分失敗のどちらでも特別扱いする
+    const authKind = detectAuthErrorKind(aggregated.perProject);
+
+    if (aggregated.errorCount === aggregated.perProject.length) {
+      // 全失敗。認証エラーなら専用 UI、それ以外は従来の Error 表示
+      if (authKind) {
+        statusBar.showAuthRequired(config.language);
+        maybeNotifyAuthError(authKind, config.language);
+      } else {
+        const first = aggregated.perProject.find((r) => r.error !== null)?.error ?? "unknown";
+        statusBar.showError(first);
+      }
+      return;
+    }
+
+    logSuccess(aggregated, config);
+    statusBar.update(aggregated, config.monthlyBudget, config.language);
+
+    // 部分失敗でも認証エラーが含まれていれば1度だけ通知
+    if (authKind) {
+      maybeNotifyAuthError(authKind, config.language);
+    } else {
+      // 全プロジェクト健全に戻ったら通知抑制フラグをリセット
+      lastNotifiedAuthErrorKind = null;
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    log(`エラー: ${message}`);
-    statusBar.showError(message);
-  }
-}
+    logger.error("課金データの取得に失敗しました", error);
 
-/**
- * ログ出力
- */
-function log(message: string): void {
-  const timestamp = new Date().toISOString();
-  outputChannel.appendLine(`[${timestamp}] ${message}`);
-}
-
-/**
- * プロジェクト ID の入力を促すダイアログを表示
- */
-async function promptForProjectId(): Promise<void> {
-  // gcloud から現在のプロジェクト取得を試みる
-  let suggestedId = "";
-  try {
-    const { execSync } = require("child_process");
-    suggestedId = execSync("gcloud config get-value project", {
-      encoding: "utf8",
-    }).trim();
-  } catch (e) {
-    // gcloud が使えない場合は無視
-  }
-
-  const action = await vscode.window.showWarningMessage(
-    "Google Cloud Billing Watcher: プロジェクト ID が設定されていません",
-    "設定する",
-    "後で"
-  );
-
-  if (action === "設定する") {
-    const projectId = await vscode.window.showInputBox({
-      prompt: "プロジェクト ID を入力してください",
-      placeHolder: "my-project-id",
-      value: suggestedId, // 自動検知した ID を初期値に設定
-      validateInput: (value) => {
-        if (!value || value.trim() === "") {
-          return "プロジェクト ID を入力してください";
-        }
-        if (!/^[a-z][a-z0-9-]{4,28}[a-z0-9]$/.test(value)) {
-          return "プロジェクト ID の形式が正しくありません";
-        }
-        return null;
-      },
-    });
-
-    if (projectId) {
-      const config = vscode.workspace.getConfiguration("gcpBilling");
-      await config.update(
-        "projectId",
-        projectId,
-        vscode.ConfigurationTarget.Global
-      );
-      log(`プロジェクト ID を設定しました: ${projectId}`);
+    const authKind = classifyAuthError(error);
+    if (authKind) {
+      const language = loadConfig().language;
+      statusBar.showAuthRequired(language);
+      maybeNotifyAuthError(authKind, language);
+    } else {
+      statusBar.showError(message);
     }
   }
 }
 
 /**
- * 拡張機能のディアクティベーション
+ * perProject の error 文字列を走査し、最初に見つかった認証エラー種別を返す。
+ * 種別の優先度は reauth_required > credentials_missing。
  */
-export function deactivate(): void {
-  if (refreshInterval) {
-    clearInterval(refreshInterval);
+function detectAuthErrorKind(
+  perProject: Array<{ error: string | null }>,
+): AuthErrorKind {
+  let fallback: AuthErrorKind = null;
+  for (const r of perProject) {
+    if (!r.error) continue;
+    const kind = classifyAuthError(r.error);
+    if (kind === "reauth_required") return kind;
+    if (kind && !fallback) fallback = kind;
   }
-  log("拡張機能を終了しました");
+  return fallback;
+}
+
+/**
+ * 同じ種類の認証エラーを連続で通知しないようにする。
+ * 種別が変わったときと、一度成功で抑制が解けたときのみ通知する。
+ */
+function maybeNotifyAuthError(kind: AuthErrorKind, language: ExtensionConfig["language"]): void {
+  if (!kind || kind === lastNotifiedAuthErrorKind) return;
+  lastNotifiedAuthErrorKind = kind;
+
+  const labels = getLabels(language);
+  const message =
+    kind === "reauth_required" ? labels.authNotificationReauth : labels.authNotificationMissing;
+  void showAuthErrorNotification(message);
+}
+
+function logSuccess(
+  aggregated: ReturnType<BillingManager["fetchAll"]> extends Promise<infer T> ? T : never,
+  config: ExtensionConfig,
+): void {
+  const { total, errorCount } = aggregated;
+  logger.info(
+    `課金データ取得: ${total.currency} ${total.amount.toFixed(2)} (projects=${aggregated.perProject.length}, errors=${errorCount})`,
+  );
+  if (config.monthlyBudget > 0) {
+    const ratio = ((total.amount / config.monthlyBudget) * 100).toFixed(1);
+    logger.info(`予算使用率: ${ratio}%`);
+  }
+}
+
+/**
+ * SSL 検証スキップの反映。設定 OFF 時は環境変数を元に戻す。
+ */
+function applySslVerificationSetting(skip: boolean): void {
+  if (skip) {
+    logger.warn("SSL 証明書の検証をスキップします (gcpBilling.skipSslVerification: true)");
+    process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
+  } else {
+    delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;
+  }
+}
+
+function clearRefreshTimer(): void {
+  if (refreshTimer) {
+    clearInterval(refreshTimer);
+    refreshTimer = undefined;
+  }
 }
