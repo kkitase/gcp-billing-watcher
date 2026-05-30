@@ -2,7 +2,7 @@
   "name": "gcp-billing-watcher",
   "displayName": "Google Cloud Billing Watcher",
   "description": "Display Google Cloud billing status (current month, annual total, etc.) in real-time in the status bar.",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "publisher": "kimisan",
   "license": "MIT",
   "engines": {
@@ -78,24 +78,6 @@
           },
           "order": 1
         },
-        "gcpBilling.projectId": {
-          "type": "string",
-          "default": "",
-          "description": "(Deprecated) Single project ID. Use gcpBilling.projects instead. Kept for backward compatibility.",
-          "order": 10
-        },
-        "gcpBilling.datasetId": {
-          "type": "string",
-          "default": "billing_export",
-          "description": "(Deprecated) BigQuery dataset name used with gcpBilling.projectId.",
-          "order": 11
-        },
-        "gcpBilling.credentialsPath": {
-          "type": "string",
-          "default": "",
-          "description": "(Deprecated) Service account JSON key path used with gcpBilling.projectId.",
-          "order": 12
-        },
         "gcpBilling.refreshIntervalMinutes": {
           "type": "number",
           "default": 30,
@@ -135,15 +117,21 @@
     }
   },
   "scripts": {
-    "compile": "tsc -p ./",
-    "watch": "tsc -watch -p ./",
-    "package": "npm run compile && npx vsce package --out release/"
+    "typecheck": "tsc -p ./ --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "compile": "node esbuild.js",
+    "watch": "node esbuild.js --watch",
+    "vscode:prepublish": "npm run typecheck && node esbuild.js --production",
+    "package": "npm run vscode:prepublish && npx vsce package --out release/"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
     "@types/vscode": "^1.85.0",
     "@vscode/vsce": "^3.7.1",
-    "typescript": "^5.3.0"
+    "esbuild": "^0.28.0",
+    "typescript": "^5.3.0",
+    "vitest": "^4.1.7"
   },
   "dependencies": {
     "google-auth-library": "^9.0.0"

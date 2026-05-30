@@ -33,10 +33,30 @@ gcloud auth application-default login
 gcloud config set project <your-project-id>
 ```
 
-### Step 3: VS Code でプロジェクト ID を設定
+### Step 3: VS Code でプロジェクトを設定
 
-1. VS Code の設定（`Cmd + ,`）を開き、`gcpBilling.projectId` を検索します。
-2. Step 1 でエクスポート先に指定した **プロジェクト ID** を入力します。
+`settings.json` の `gcpBilling.projects` に1つ以上のプロジェクトを追加します：
+
+```jsonc
+{
+  "gcpBilling.projects": [
+    {
+      "projectId": "your-project-id",
+      "datasetId": "billing_export",
+      "label": "メイン"
+    }
+  ]
+}
+```
+
+| フィールド | 必須 | デフォルト | 説明 |
+|---|---|---|---|
+| `projectId` | ✅ | - | 課金エクスポート先の GCP プロジェクト ID |
+| `datasetId` | | `billing_export` | BigQuery のデータセット名 |
+| `credentialsPath` | | （ADC を使用） | サービスアカウント JSON のパス |
+| `label` | | `projectId` | Tooltip 内訳に表示される名前 |
+
+プロジェクト未設定で起動すると警告が表示され、「設定する」を押すと `gcloud projects list` から QuickPick で選択できます。
 
 ---
 

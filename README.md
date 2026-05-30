@@ -35,10 +35,30 @@ gcloud auth application-default login
 gcloud config set project <your-project-id>
 ```
 
-### Step 3: Configure Project ID in VS Code
+### Step 3: Configure Projects in VS Code
 
-1. Open VS Code Settings (`Cmd + ,`) and search for `gcpBilling.projectId`.
-2. Enter the **Project ID** where you exported your billing data in Step 1.
+Add one or more projects to `gcpBilling.projects` in your `settings.json`:
+
+```jsonc
+{
+  "gcpBilling.projects": [
+    {
+      "projectId": "your-project-id",
+      "datasetId": "billing_export",
+      "label": "Main"
+    }
+  ]
+}
+```
+
+| Field | Required | Default | Description |
+|---|---|---|---|
+| `projectId` | ✅ | - | GCP project ID where billing is exported. |
+| `datasetId` | | `billing_export` | BigQuery dataset name. |
+| `credentialsPath` | | (uses ADC) | Path to a service account JSON key file. |
+| `label` | | `projectId` | Display name shown in the tooltip breakdown. |
+
+If the extension launches with no project configured, a warning will appear with a "Set up" button that opens a project picker (powered by `gcloud projects list`).
 
 ---
 

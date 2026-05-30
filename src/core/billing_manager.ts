@@ -53,6 +53,15 @@ export class BillingManager {
     return this.services.length > 0;
   }
 
+  /**
+   * 全 BillingService の GoogleAuth クライアントを作り直す。
+   * 認証エラー後に gcloud で再ログインしたユーザが手動更新したときに呼び、
+   * 古い refresh_token のメモリキャッシュを破棄する。
+   */
+  resetAuth(): void {
+    for (const s of this.services) s.resetAuth();
+  }
+
   getProjects(): ProjectConfig[] {
     return this.services.map((s) => s.project);
   }

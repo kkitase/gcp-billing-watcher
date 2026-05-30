@@ -4,10 +4,18 @@
  */
 
 import * as vscode from "vscode";
-import { promptForProjectId, registerCommands, showAuthErrorNotification } from "./commands";
+import {
+  promptForProjectId,
+  registerCommands,
+  showApiDisabledNotification,
+  showAuthErrorNotification,
+  showBillingErrorNotification,
+} from "./commands";
+import { ApiDisabledInfo, parseApiDisabledError } from "./core/api_error";
 import { AuthErrorKind, classifyAuthError } from "./core/auth_error";
+import { BillingErrorInfo, parseBillingError } from "./core/billing_error";
 import { BillingManager } from "./core/billing_manager";
-import { ExtensionConfig, loadConfig } from "./core/config";
+import { ExtensionConfig, loadConfig, migrateLegacyConfig } from "./core/config";
 import { Logger } from "./core/logger";
 import { getLabels } from "./ui/i18n";
 import { StatusBarManager } from "./ui/status_bar";
@@ -18,10 +26,16 @@ let logger: Logger;
 let statusBar: StatusBarManager;
 let manager: BillingManager;
 let refreshTimer: NodeJS.Timeout | undefined;
+/** fetchAndUpdate の再入防止。定期更新・手動更新・再初期化の並行実行で表示が乱れるのを防ぐ */
+let isFetching = false;
 /** 認証エラー通知の重複抑制。同じ種類の警告が連続して出るのを防ぐ */
 let lastNotifiedAuthErrorKind: AuthErrorKind = null;
+/** API 未有効化通知の重複抑制キー ("projectId::apiId")。プロジェクト/API が変われば再通知する */
+let lastNotifiedApiDisabledKey: string | null = null;
+/** BigQuery エラー通知の重複抑制キー ("kind::projectId::datasetId") */
+let lastNotifiedBillingErrorKey: string | null = null;
 
-export function activate(context: vscode.ExtensionContext): void {
+export async function activate(context: vscode.ExtensionContext): Promise<void> {
   logger = new Logger(EXTENSION_NAME);
   context.subscriptions.push({ dispose: () => logger.dispose() });
 
@@ -36,6 +50,21 @@ export function activate(context: vscode.ExtensionContext): void {
     refresh: fetchAndUpdate,
   });
 
+  logger.info("拡張機能を起動しています...");
+
+  // v0.5.0 で UI から廃止した旧設定を新形式に自動移行する。
+  // 設定変更リスナーより前に実行することで、移行による update() が
+  // onDidChangeConfiguration を発火させ initialize() が二重に走るのを防ぐ。
+  try {
+    const migrated = await migrateLegacyConfig();
+    if (migrated) {
+      logger.info("旧設定 (gcpBilling.projectId 系) を gcpBilling.projects へ移行しました");
+    }
+  } catch (e) {
+    logger.error("旧設定のマイグレーションに失敗しました", e);
+  }
+
+  // マイグレーション完了後に設定変更リスナーを登録する
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (e.affectsConfiguration("gcpBilling")) {
@@ -45,7 +74,6 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
   );
 
-  logger.info("拡張機能を起動しています...");
   initialize();
   logger.info("拡張機能の起動が完了しました");
 }
@@ -93,6 +121,28 @@ function initialize(): void {
 }
 
 async function fetchAndUpdate(): Promise<void> {
+  // 既に取得処理中なら多重実行しない（定期更新と手動更新・再初期化の競合を防ぐ）
+  if (isFetching) {
+    logger.info("既に課金データを取得中のため、今回の更新要求はスキップします");
+    return;
+  }
+  isFetching = true;
+  try {
+    await fetchAndUpdateInner();
+  } finally {
+    isFetching = false;
+  }
+}
+
+async function fetchAndUpdateInner(): Promise<void> {
+  // 直前が認証エラー状態なら、GoogleAuth のメモリキャッシュを破棄してから再試行する。
+  // `gcloud auth application-default login` で refresh_token が更新されても、
+  // プロセス内の UserRefreshClient が古いトークンを持ち続けるのを防ぐ。
+  if (lastNotifiedAuthErrorKind !== null) {
+    logger.info("認証エラー状態から復帰を試行: GoogleAuth クライアントを再生成します");
+    manager.resetAuth();
+  }
+
   if (!manager.hasProjects()) {
     // UI は initialize 側で showNotConfigured 済み
     return;
@@ -106,14 +156,23 @@ async function fetchAndUpdate(): Promise<void> {
     // 設定の再読み込みはここで1度だけ行う
     const config = loadConfig();
 
-    // 認証エラーは全失敗・部分失敗のどちらでも特別扱いする
+    // 既知エラーは全失敗・部分失敗のどちらでも特別扱いする。
+    // 優先度: reauth_required > credentials_missing > api_disabled > permission_denied > dataset_not_found > その他。
     const authKind = detectAuthErrorKind(aggregated.perProject);
+    const apiDisabled = authKind ? null : detectApiDisabled(aggregated.perProject);
+    const billingError =
+      authKind || apiDisabled ? null : detectBillingError(aggregated.perProject);
 
     if (aggregated.errorCount === aggregated.perProject.length) {
-      // 全失敗。認証エラーなら専用 UI、それ以外は従来の Error 表示
       if (authKind) {
         statusBar.showAuthRequired(config.language);
         maybeNotifyAuthError(authKind, config.language);
+      } else if (apiDisabled) {
+        statusBar.showApiDisabled(apiDisabled.apiName, apiDisabled.projectId, config.language);
+        maybeNotifyApiDisabled(apiDisabled);
+      } else if (billingError) {
+        statusBar.showBillingError(billingError, config.language);
+        maybeNotifyBillingError(billingError);
       } else {
         const first = aggregated.perProject.find((r) => r.error !== null)?.error ?? "unknown";
         statusBar.showError(first);
@@ -124,22 +183,37 @@ async function fetchAndUpdate(): Promise<void> {
     logSuccess(aggregated, config);
     statusBar.update(aggregated, config.monthlyBudget, config.language);
 
-    // 部分失敗でも認証エラーが含まれていれば1度だけ通知
+    // 部分失敗でも既知エラーが含まれていれば1度だけ通知
     if (authKind) {
       maybeNotifyAuthError(authKind, config.language);
+    } else if (apiDisabled) {
+      maybeNotifyApiDisabled(apiDisabled);
+    } else if (billingError) {
+      maybeNotifyBillingError(billingError);
     } else {
       // 全プロジェクト健全に戻ったら通知抑制フラグをリセット
       lastNotifiedAuthErrorKind = null;
+      lastNotifiedApiDisabledKey = null;
+      lastNotifiedBillingErrorKey = null;
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     logger.error("課金データの取得に失敗しました", error);
 
     const authKind = classifyAuthError(error);
+    const apiDisabled = authKind ? null : parseApiDisabledError(error);
+    const billingError = authKind || apiDisabled ? null : parseBillingError(error);
+    const language = loadConfig().language;
+
     if (authKind) {
-      const language = loadConfig().language;
       statusBar.showAuthRequired(language);
       maybeNotifyAuthError(authKind, language);
+    } else if (apiDisabled) {
+      statusBar.showApiDisabled(apiDisabled.apiName, apiDisabled.projectId, language);
+      maybeNotifyApiDisabled(apiDisabled);
+    } else if (billingError) {
+      statusBar.showBillingError(billingError, language);
+      maybeNotifyBillingError(billingError);
     } else {
       statusBar.showError(message);
     }
@@ -175,6 +249,59 @@ function maybeNotifyAuthError(kind: AuthErrorKind, language: ExtensionConfig["la
   const message =
     kind === "reauth_required" ? labels.authNotificationReauth : labels.authNotificationMissing;
   void showAuthErrorNotification(message);
+}
+
+/**
+ * perProject の error 文字列を走査し、最初に見つかった API 未有効化情報を返す。
+ */
+function detectApiDisabled(
+  perProject: Array<{ error: string | null }>,
+): ApiDisabledInfo | null {
+  for (const r of perProject) {
+    if (!r.error) continue;
+    const info = parseApiDisabledError(r.error);
+    if (info) return info;
+  }
+  return null;
+}
+
+/**
+ * 同じ (projectId, apiId) の API 未有効化通知を連続で出さない。
+ * 別プロジェクトや別 API になれば改めて通知する。
+ */
+function maybeNotifyApiDisabled(info: ApiDisabledInfo): void {
+  const key = `${info.projectId}::${info.apiId}`;
+  if (key === lastNotifiedApiDisabledKey) return;
+  lastNotifiedApiDisabledKey = key;
+  void showApiDisabledNotification(info);
+}
+
+/**
+ * perProject の error から最初に見つかった BigQuery エラーを返す。
+ * 複数プロジェクトで異なるエラーが出ている場合、permission_denied を優先する。
+ */
+function detectBillingError(
+  perProject: Array<{ error: string | null }>,
+): BillingErrorInfo | null {
+  let fallback: BillingErrorInfo | null = null;
+  for (const r of perProject) {
+    if (!r.error) continue;
+    const info = parseBillingError(r.error);
+    if (!info) continue;
+    if (info.kind === "permission_denied") return info;
+    if (!fallback) fallback = info;
+  }
+  return fallback;
+}
+
+/**
+ * 同じ (kind, projectId, datasetId) の BigQuery エラー通知を連続で出さない。
+ */
+function maybeNotifyBillingError(info: BillingErrorInfo): void {
+  const key = `${info.kind}::${info.projectId ?? "?"}::${info.datasetId ?? "?"}`;
+  if (key === lastNotifiedBillingErrorKey) return;
+  lastNotifiedBillingErrorKey = key;
+  void showBillingErrorNotification(info);
 }
 
 function logSuccess(

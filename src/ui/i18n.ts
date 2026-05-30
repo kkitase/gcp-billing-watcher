@@ -31,6 +31,23 @@ export interface Labels {
   authActionCopyCommand: string;
   authActionOpenHelp: string;
   authCommandCopied: string;
+  apiDisabled: string;
+  apiDisabledTooltip: (apiName: string, projectId: string) => string;
+  apiDisabledNotification: (apiName: string, projectId: string) => string;
+  apiDisabledActionEnable: string;
+  apiDisabledActionCopyUrl: string;
+  apiUrlCopied: string;
+  errorShortDatasetNotFound: string;
+  errorShortPermissionDenied: string;
+  errorShortApiDisabled: string;
+  errorShortAuthRequired: string;
+  billingErrorPermissionTooltip: (projectId: string, datasetId: string) => string;
+  billingErrorDatasetNotFoundTooltip: (projectId: string, datasetId: string) => string;
+  billingErrorPermissionNotification: (projectId: string, datasetId: string) => string;
+  billingErrorDatasetNotFoundNotification: (projectId: string, datasetId: string) => string;
+  billingErrorActionOpenIam: string;
+  billingErrorActionOpenSettings: string;
+  billingErrorActionOpenHelp: string;
 }
 
 export function resolveLocale(language: Language): string {
@@ -72,6 +89,31 @@ const JA: Labels = {
   authActionCopyCommand: "コマンドをコピー",
   authActionOpenHelp: "ヘルプを開く",
   authCommandCopied: "コマンドをクリップボードにコピーしました",
+  apiDisabled: "API 未有効",
+  apiDisabledTooltip: (apiName, projectId) =>
+    `${apiName} がプロジェクト「${projectId}」で有効化されていません。\nクリックしてメニューを開き、有効化ページへアクセスしてください。`,
+  apiDisabledNotification: (apiName, projectId) =>
+    `${apiName} がプロジェクト「${projectId}」で有効化されていません。Google Cloud コンソールで有効化してください。`,
+  apiDisabledActionEnable: "API を有効化",
+  apiDisabledActionCopyUrl: "URL をコピー",
+  apiUrlCopied: "URL をクリップボードにコピーしました",
+  errorShortDatasetNotFound: "データセットが見つかりません",
+  errorShortPermissionDenied: "BigQuery 権限が不足",
+  errorShortApiDisabled: "API 未有効",
+  errorShortAuthRequired: "認証が必要",
+  billingErrorPermissionTooltip: (projectId, datasetId) =>
+    `BigQuery への権限が不足しています: ${projectId}:${datasetId}\n` +
+    `IAM で「BigQuery ジョブユーザー」「BigQuery データ閲覧者」を付与してください。`,
+  billingErrorDatasetNotFoundTooltip: (projectId, datasetId) =>
+    `データセットが見つかりません: ${projectId}:${datasetId}\n` +
+    `gcpBilling.projects の datasetId と Cloud Billing Export の出力先を確認してください。`,
+  billingErrorPermissionNotification: (projectId, datasetId) =>
+    `${projectId}:${datasetId} に対する BigQuery 権限がありません。IAM で「BigQuery ジョブユーザー」「BigQuery データ閲覧者」を付与してください。`,
+  billingErrorDatasetNotFoundNotification: (projectId, datasetId) =>
+    `データセット ${projectId}:${datasetId} が見つかりません。datasetId 設定または Cloud Billing Export の出力先を確認してください。`,
+  billingErrorActionOpenIam: "IAM コンソールを開く",
+  billingErrorActionOpenSettings: "設定を開く",
+  billingErrorActionOpenHelp: "ヘルプを開く",
 };
 
 const EN: Labels = {
@@ -102,4 +144,29 @@ const EN: Labels = {
   authActionCopyCommand: "Copy Command",
   authActionOpenHelp: "Open Help",
   authCommandCopied: "Command copied to clipboard",
+  apiDisabled: "API Disabled",
+  apiDisabledTooltip: (apiName, projectId) =>
+    `${apiName} is not enabled for project "${projectId}".\nClick to open the menu and enable the API.`,
+  apiDisabledNotification: (apiName, projectId) =>
+    `${apiName} is not enabled for project "${projectId}". Enable it in the Google Cloud Console.`,
+  apiDisabledActionEnable: "Enable API",
+  apiDisabledActionCopyUrl: "Copy URL",
+  apiUrlCopied: "URL copied to clipboard",
+  errorShortDatasetNotFound: "Dataset not found",
+  errorShortPermissionDenied: "BigQuery permission required",
+  errorShortApiDisabled: "API disabled",
+  errorShortAuthRequired: "Authentication required",
+  billingErrorPermissionTooltip: (projectId, datasetId) =>
+    `Missing BigQuery permission for ${projectId}:${datasetId}.\n` +
+    `Grant 'BigQuery Job User' and 'BigQuery Data Viewer' via IAM.`,
+  billingErrorDatasetNotFoundTooltip: (projectId, datasetId) =>
+    `Dataset ${projectId}:${datasetId} not found.\n` +
+    `Verify gcpBilling.projects datasetId and your Cloud Billing Export destination.`,
+  billingErrorPermissionNotification: (projectId, datasetId) =>
+    `Missing BigQuery permission for ${projectId}:${datasetId}. Grant 'BigQuery Job User' and 'BigQuery Data Viewer' via IAM.`,
+  billingErrorDatasetNotFoundNotification: (projectId, datasetId) =>
+    `Dataset ${projectId}:${datasetId} not found. Check the datasetId setting or your Cloud Billing Export destination.`,
+  billingErrorActionOpenIam: "Open IAM Console",
+  billingErrorActionOpenSettings: "Open Settings",
+  billingErrorActionOpenHelp: "Open Help",
 };

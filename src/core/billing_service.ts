@@ -43,7 +43,7 @@ const BILLING_TABLE_PREFIXES = [
 ] as const;
 
 export class BillingService {
-  private readonly auth: GoogleAuth;
+  private auth: GoogleAuth;
   private readonly logger: Logger;
   private cachedTableName: string | null = null;
 
@@ -52,9 +52,22 @@ export class BillingService {
     logger: Logger,
   ) {
     this.logger = logger;
-    this.auth = new GoogleAuth({
+    this.auth = this.createAuth();
+  }
+
+  /**
+   * GoogleAuth のクライアントを作り直す。
+   * `gcloud auth application-default login` 後に古い refresh_token をメモリ
+   * キャッシュしたままにならないよう、再認証を試みる前に呼ぶ。
+   */
+  resetAuth(): void {
+    this.auth = this.createAuth();
+  }
+
+  private createAuth(): GoogleAuth {
+    return new GoogleAuth({
       scopes: ["https://www.googleapis.com/auth/cloud-platform"],
-      ...(project.credentialsPath ? { keyFilename: project.credentialsPath } : {}),
+      ...(this.project.credentialsPath ? { keyFilename: this.project.credentialsPath } : {}),
     });
   }
 

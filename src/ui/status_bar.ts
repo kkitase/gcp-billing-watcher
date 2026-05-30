@@ -4,9 +4,12 @@
  */
 
 import * as vscode from "vscode";
+import { parseApiDisabledError } from "../core/api_error";
+import { classifyAuthError } from "../core/auth_error";
+import { BillingErrorInfo, parseBillingError } from "../core/billing_error";
 import { AggregatedBilling } from "../core/billing_manager";
 import { Language } from "../core/config";
-import { formatCurrency } from "./formatter";
+import { formatCurrency, isZeroDecimalCurrency } from "./formatter";
 import { getLabels, resolveLocale } from "./i18n";
 
 const DIVIDER = "─────────────────────";
@@ -44,6 +47,31 @@ export class StatusBarManager {
     const labels = getLabels(language);
     this.item.text = `$(key) Google Cloud: ${labels.authRequired}`;
     this.item.tooltip = labels.authRequiredTooltip;
+    this.item.backgroundColor = new vscode.ThemeColor("statusBarItem.warningBackground");
+  }
+
+  showApiDisabled(apiName: string, projectId: string, language: Language): void {
+    const labels = getLabels(language);
+    this.item.text = `$(circle-slash) Google Cloud: ${labels.apiDisabled}`;
+    this.item.tooltip = labels.apiDisabledTooltip(apiName, projectId);
+    this.item.backgroundColor = new vscode.ThemeColor("statusBarItem.warningBackground");
+  }
+
+  /**
+   * BigQuery レイヤのエラー（権限不足 / データセット未存在）専用の表示。
+   * 全プロジェクトが同じ理由で失敗したときに使う。
+   */
+  showBillingError(info: BillingErrorInfo, language: Language): void {
+    const labels = getLabels(language);
+    const projectId = info.projectId ?? "?";
+    const datasetId = info.datasetId ?? "?";
+    if (info.kind === "permission_denied") {
+      this.item.text = `$(shield) Google Cloud: ${labels.errorShortPermissionDenied}`;
+      this.item.tooltip = labels.billingErrorPermissionTooltip(projectId, datasetId);
+    } else {
+      this.item.text = `$(question) Google Cloud: ${labels.errorShortDatasetNotFound}`;
+      this.item.tooltip = labels.billingErrorDatasetNotFoundTooltip(projectId, datasetId);
+    }
     this.item.backgroundColor = new vscode.ThemeColor("statusBarItem.warningBackground");
   }
 
@@ -105,7 +133,7 @@ export class StatusBarManager {
           const amount = formatCurrency(r.cost.amount, r.cost.currency, locale);
           lines.push(`   • ${r.project.label}: ${amount}`);
         } else {
-          lines.push(`   • ${r.project.label}: ⚠️ ${r.error ?? "error"}`);
+          lines.push(`   • ${r.project.label}: ⚠️ ${summarizeError(r.error, language)}`);
         }
       }
     }
@@ -124,6 +152,25 @@ export class StatusBarManager {
     );
     return lines.join("\n");
   }
+}
+
+/**
+ * Tooltip の内訳に表示するためにエラーメッセージを短い1行に要約する。
+ * 既知のエラー種別は専用ラベルに、未知のメッセージは80文字でトリミングする。
+ */
+function summarizeError(text: string | null, language: Language): string {
+  if (!text) return "error";
+  const labels = getLabels(language);
+
+  if (classifyAuthError(text)) return labels.errorShortAuthRequired;
+  if (parseApiDisabledError(text)) return labels.errorShortApiDisabled;
+  const billing = parseBillingError(text);
+  if (billing?.kind === "permission_denied") return labels.errorShortPermissionDenied;
+  if (billing?.kind === "dataset_not_found") return labels.errorShortDatasetNotFound;
+
+  // 改行を 1 行に圧縮し、長さを制限する
+  const flattened = text.replace(/\s+/g, " ").trim();
+  return flattened.length > 80 ? `${flattened.slice(0, 80)}…` : flattened;
 }
 
 function pickSeverity(
@@ -148,11 +195,14 @@ function pickSeverity(
       };
     }
   } else {
-    // 予算未設定時の年間コストベースのフォールバック判定
-    if (total.yearlyAmount > 500) {
+    // 予算未設定時の年間コストベースのフォールバック判定。
+    // 閾値は USD 基準（$500 / $100）。ゼロ十進通貨（JPY 等）は桁が大きく異なるため
+    // 概ねの為替感に合わせて 100 倍した閾値で判定する。
+    const scale = isZeroDecimalCurrency(total.currency) ? 100 : 1;
+    if (total.yearlyAmount > 500 * scale) {
       return { icon: "$(error)", backgroundColor: undefined };
     }
-    if (total.yearlyAmount > 100) {
+    if (total.yearlyAmount > 100 * scale) {
       return { icon: "$(warning)", backgroundColor: undefined };
     }
   }

@@ -2,6 +2,32 @@
 
 All notable changes to the "Google Cloud Billing Watcher" extension will be documented in this file.
 
+## [0.5.0] - 2026-04-25
+
+### Added
+- Google API 未有効化エラー (`* API has not been used in project ... before or it is disabled`) を検知し、有効化ページへ誘導する通知を追加
+- ステータスバーに「API 未有効 (⊘)」状態を追加（warning 背景色）
+- 通知のアクション: 「API を有効化」「URL をコピー」「ヘルプを開く」
+- BigQuery API に限らず、メッセージ形式に合致する全ての Google API 未有効化エラーを汎用的に検知（`apiName` / `projectId` / 有効化 URL を抽出）
+- 同一 (projectId, apiId) の通知は連続して再表示しないよう抑制（次回成功または別 API でリセット）
+- 初回セットアップ時にプロジェクト ID を `gcloud projects list` の結果から QuickPick で選択できるように変更（取得失敗時は従来の手入力にフォールバック、ピッカー末尾に「手動で入力」項目あり）
+- BigQuery 層のエラーを検知して案内 UI を出すように追加
+  - 権限不足 (`Permission ... denied on dataset/table/project`): 通知のアクションは「IAM コンソールを開く」「ヘルプを開く」、ステータスバーは `🛡 BigQuery 権限が不足`
+  - データセット未存在 (`Not found: Dataset xxx:yyy`): 通知のアクションは「設定を開く」「ヘルプを開く」、ステータスバーは `❓ データセットが見つかりません`
+  - 同一 (kind, projectId, datasetId) の通知は連続して再表示しないよう抑制
+- Tooltip 内訳のエラー表示を短縮ラベルに置き換え（`認証が必要` / `API 未有効` / `BigQuery 権限が不足` / `データセットが見つかりません`）。未知メッセージは 80 文字でトリミング
+
+### Changed (Breaking)
+- 旧 single-project 設定 (`gcpBilling.projectId` / `gcpBilling.datasetId` / `gcpBilling.credentialsPath`) を VS Code 設定 UI から削除。設定は `gcpBilling.projects` の配列形式に一本化
+- 起動時に旧設定が残っていれば自動で `gcpBilling.projects` に移行し、旧キーは削除する（既存ユーザーは設定変更不要で動作継続）
+- 初回プロンプトで選択した projectId は `gcpBilling.projects` 配列に直接追記される（旧 `gcpBilling.projectId` への書き込みは廃止）
+
+### Fixed
+- 予算未設定時のステータスバー色分け閾値が通貨非依存のハードコード（$500 / $100）だったため、JPY など少額通貨で誤って警告/エラー色になる問題を修正。ゼロ十進通貨（JPY/KRW など）は閾値を 100 倍にスケールするように変更
+- 定期更新・手動更新・設定変更による再初期化が重なると課金データ取得 (`fetchAndUpdate`) が多重実行され、ステータスバー表示が乱れる可能性があった問題を修正（再入ガードを追加）
+- 起動時の旧設定マイグレーションが設定変更イベントを誘発し、`initialize()` および初回データ取得が二重実行される問題を修正（設定変更リスナーをマイグレーション後に登録）
+- `gcloud` 実行 (`projects list` / `config get-value project`) に同期版 `execSync` を使っており拡張ホスト（エディタ UI）が最大 30 秒ブロックされる問題を修正（非同期の `exec` に変更）
+
 ## [0.4.1] - 2026-04-25
 
 ### Added

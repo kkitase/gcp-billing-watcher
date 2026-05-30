@@ -1,15 +1,28 @@
-src/**
 .vscode/**
 .github/**
-.env*
 .git*
+.env*
 .agent/
+.claude/
+
+# 開発用ソースとビルド設定 — バンドル後は不要
+src/**
 tsconfig.json
+esbuild.js
+vitest.config.ts
+out/**/*.js.map
+
+# 依存はすべて esbuild で out/extension.js にバンドルしているので除外
+node_modules/**
+
+# パッケージング関連
 package-lock.json
 release/
 note/
 scripts/
 setup.sh
 *.vsix
+
+# 重複ドキュメント
 CHANGELOG.md
 README_ja.md

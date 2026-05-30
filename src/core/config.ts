@@ -1,7 +1,6 @@
 /**
  * 拡張機能の設定読み込み。
  * VS Code の WorkspaceConfiguration を単一の型付き ExtensionConfig に正規化する。
- * 旧設定 (gcpBilling.projectId) は自動的に projects[] にマイグレーションされる。
  */
 
 import * as vscode from "vscode";
@@ -33,7 +32,6 @@ export function loadConfig(): ExtensionConfig {
   const raw = vscode.workspace.getConfiguration(CONFIG_SECTION);
 
   const projects = normalizeProjects(raw);
-
   const refreshMinutes = raw.get<number>("refreshIntervalMinutes", DEFAULT_REFRESH_MINUTES);
 
   return {
@@ -45,34 +43,10 @@ export function loadConfig(): ExtensionConfig {
   };
 }
 
-/**
- * 新設定 gcpBilling.projects[] を優先し、未設定の場合のみ旧 projectId を fallback として取り込む。
- * これにより既存ユーザーは設定変更なしで動作し続ける。
- */
 function normalizeProjects(raw: vscode.WorkspaceConfiguration): ProjectConfig[] {
   const rawProjects = raw.get<unknown[]>("projects", []);
-  const fromNew = Array.isArray(rawProjects)
-    ? rawProjects.map(parseProjectEntry).filter((p): p is ProjectConfig => p !== null)
-    : [];
-
-  if (fromNew.length > 0) {
-    return fromNew;
-  }
-
-  // 後方互換: 旧単一プロジェクト設定を拾う
-  const legacyProjectId = raw.get<string>("projectId", "").trim();
-  if (!legacyProjectId) {
-    return [];
-  }
-
-  return [
-    {
-      projectId: legacyProjectId,
-      datasetId: raw.get<string>("datasetId", DEFAULT_DATASET_ID) || DEFAULT_DATASET_ID,
-      credentialsPath: raw.get<string>("credentialsPath", "") || undefined,
-      label: legacyProjectId,
-    },
-  ];
+  if (!Array.isArray(rawProjects)) return [];
+  return rawProjects.map(parseProjectEntry).filter((p): p is ProjectConfig => p !== null);
 }
 
 function parseProjectEntry(entry: unknown): ProjectConfig | null {
@@ -117,10 +91,54 @@ export function projectsEqual(a: ProjectConfig[], b: ProjectConfig[]): boolean {
 }
 
 /**
- * 旧 projectId をプログラム的に更新するユーティリティ。
- * 初回起動ダイアログからのみ使う想定。
+ * 選んだ projectId を gcpBilling.projects 配列に追記する。
+ * 初回プロンプトおよび「プロジェクト追加」コマンドから使う。
  */
-export async function saveLegacyProjectId(projectId: string): Promise<void> {
-  const config = vscode.workspace.getConfiguration(CONFIG_SECTION);
-  await config.update("projectId", projectId, vscode.ConfigurationTarget.Global);
+export async function addProjectToConfig(projectId: string): Promise<void> {
+  const raw = vscode.workspace.getConfiguration(CONFIG_SECTION);
+  const existing = raw.get<unknown[]>("projects", []) ?? [];
+  const list = Array.isArray(existing) ? existing : [];
+  const next = [...list, { projectId, datasetId: DEFAULT_DATASET_ID, label: projectId }];
+  await raw.update("projects", next, vscode.ConfigurationTarget.Global);
+}
+
+/**
+ * v0.5.0 で UI から廃止した旧 single-project 設定 (gcpBilling.projectId /
+ * datasetId / credentialsPath) を新 gcpBilling.projects[] 形式へ自動移行する。
+ * 移行後は旧キーを削除して二重保持を防ぐ。
+ */
+export async function migrateLegacyConfig(): Promise<boolean> {
+  const raw = vscode.workspace.getConfiguration(CONFIG_SECTION);
+  const legacyProjectId = (raw.get<string>("projectId", "") ?? "").trim();
+  const legacyDatasetId = (raw.get<string>("datasetId", "") ?? "").trim();
+  const legacyCredentialsPath = (raw.get<string>("credentialsPath", "") ?? "").trim();
+
+  // 旧キーがどれも残っていなければ何もしない
+  if (!legacyProjectId && !legacyDatasetId && !legacyCredentialsPath) {
+    return false;
+  }
+
+  const existingRaw = raw.get<unknown[]>("projects", []) ?? [];
+  const existing = Array.isArray(existingRaw) ? existingRaw : [];
+
+  // 新 projects が未設定で旧 projectId がある場合のみエントリを作成する
+  if (existing.length === 0 && legacyProjectId) {
+    const newEntry: Record<string, string> = {
+      projectId: legacyProjectId,
+      datasetId: legacyDatasetId || DEFAULT_DATASET_ID,
+      label: legacyProjectId,
+    };
+    if (legacyCredentialsPath) newEntry.credentialsPath = legacyCredentialsPath;
+    await raw.update("projects", [newEntry], vscode.ConfigurationTarget.Global);
+  }
+
+  // 旧キーをクリア。package.json から登録が消えていても settings.json 上の値は削除される。
+  for (const key of ["projectId", "datasetId", "credentialsPath"] as const) {
+    try {
+      await raw.update(key, undefined, vscode.ConfigurationTarget.Global);
+    } catch {
+      // 登録解除済みでも続行する
+    }
+  }
+  return true;
 }
